@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "framework": null,
+  "functions": {
+    "api/download.js": {
+      "maxDuration": 15
+    },
+    "api/upload.js": {
+      "maxDuration": 15
+    }
+  }
+}

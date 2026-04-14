@@ -24,11 +24,8 @@
     //  CONFIGURATION
     // ============================================================
     const CFG = {
-        // ── WebSocket ─────────────────────────────
-        get WS_URL() {
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return `${proto}//${location.host}/ws`;
-        },
+        // ── Endpoints ─────────────────────────────
+        PING_URL:     '/api/ping',
 
         // ── Endpoints ─────────────────────────────
         DOWNLOAD_URL: '/api/download',
@@ -359,71 +356,45 @@
         }
 
         // ============================================================
-        //  1.  PING  (WebSocket echo)
+        //  1.  PING  (HTTP Fetch fallback since Vercel doesn't do WS)
         // ============================================================
-        _testPing() {
-            return new Promise((resolve, reject) => {
-                let ws;
+        async _testPing() {
+            const samples = [];
+            let count = 0;
+
+            while (count < CFG.PING_TOTAL) {
+                const t0 = performance.now();
                 try {
-                    ws = new WebSocket(CFG.WS_URL);
+                    await fetch(CFG.PING_URL, { cache: 'no-store' });
                 } catch (e) {
-                    return reject(new Error('WebSocket creation failed'));
+                    throw new Error('Ping request failed');
                 }
-                this.ws = ws;
+                const rtt = performance.now() - t0;
 
-                const samples = [];
-                let count = 0;
-                let t0;
+                if (count >= CFG.PING_WARMUP) {
+                    samples.push(rtt);
+                }
+                count++;
 
-                ws.binaryType = 'arraybuffer';
+                // Update gauge with current ping
+                this.speedVal.textContent = rtt.toFixed(1);
+                this.speedUnit.textContent = 'ms';
+                this._setProgress((count / CFG.PING_TOTAL) * 30);
+            }
 
-                ws.onopen = () => {
-                    t0 = performance.now();
-                    ws.send('p');                   // tiny 1-byte packet
-                };
+            // Median
+            samples.sort((a, b) => a - b);
+            const median = samples[Math.floor(samples.length / 2)];
 
-                ws.onmessage = () => {
-                    const rtt = performance.now() - t0;
+            // Jitter (mean of consecutive absolute differences)
+            let jSum = 0;
+            for (let i = 1; i < samples.length; i++)
+                jSum += Math.abs(samples[i] - samples[i - 1]);
+            const jitter = samples.length > 1
+                ? jSum / (samples.length - 1)
+                : 0;
 
-                    if (count >= CFG.PING_WARMUP) {
-                        samples.push(rtt);
-                    }
-                    count++;
-
-                    // Update gauge with current ping
-                    this.speedVal.textContent = rtt.toFixed(1);
-                    this.speedUnit.textContent = 'ms';
-                    this._setProgress((count / CFG.PING_TOTAL) * 30);
-
-                    if (count < CFG.PING_TOTAL) {
-                        t0 = performance.now();
-                        ws.send('p');
-                    } else {
-                        ws.close();
-                        this.ws = null;
-
-                        // Median
-                        samples.sort((a, b) => a - b);
-                        const median = samples[Math.floor(samples.length / 2)];
-
-                        // Jitter (mean of consecutive absolute differences)
-                        let jSum = 0;
-                        for (let i = 1; i < samples.length; i++)
-                            jSum += Math.abs(samples[i] - samples[i - 1]);
-                        const jitter = samples.length > 1
-                            ? jSum / (samples.length - 1)
-                            : 0;
-
-                        resolve({ median, jitter, samples });
-                    }
-                };
-
-                ws.onerror = () => reject(new Error('WebSocket error'));
-                ws.onclose = (e) => {
-                    if (count < CFG.PING_TOTAL)
-                        reject(new Error('WebSocket closed prematurely'));
-                };
-            });
+            return { median, jitter, samples };
         }
 
         // ============================================================
